@@ -222,6 +222,28 @@ class PlanMatcher:
         logger.info("No active plan matched signal %s %s", symbol, action)
         return None
 
+    def match_hypothesis(self, signal: dict) -> dict | None:
+        """Match a non-executing hypothesis by symbol/timeframe."""
+        if not isinstance(signal, dict):
+            return None
+        symbol = str(signal.get("symbol", "")).strip().upper()
+        timeframe = str(signal.get("timeframe", "")).strip().upper()
+        if not symbol:
+            return None
+        with self._lock:
+            for plan in self.plans:
+                if "hypothesis_status" not in plan:
+                    continue
+                if normalize_status(plan.get("hypothesis_status")) in ("invalidated", "completed", "expired"):
+                    continue
+                if str(plan.get("symbol", "")).strip().upper() != symbol:
+                    continue
+                plan_tf = str(plan.get("timeframe", "")).strip().upper()
+                if timeframe and plan_tf and timeframe != plan_tf:
+                    continue
+                return plan
+        return None
+
     def match_by_object(self, object_name: str) -> dict | None:
         """Match an MT5 chart-object interaction by ``object_name``.
 
