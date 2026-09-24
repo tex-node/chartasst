@@ -205,6 +205,29 @@ def create_app(matcher=None, handler=None, notifier=None) -> Flask:
             logger.warning("Duplicate signal within %ss window: %s", DUPLICATE_WINDOW_SEC, fingerprint)
         return duplicate
 
+    def _record_hypothesis_market_event(plan: dict, signal: dict) -> tuple[str, dict | None]:
+        """Record an explicit market event and advance a GUI hypothesis."""
+        if "hypothesis_status" not in plan:
+            return "legacy", None
+        event_type = str(signal.get("event_type") or signal.get("hypothesis_event") or signal.get("condition_type") or "development").strip().lower()
+        transitions = {
+            "trigger": ("developing", "Trigger reached"),
+            "confirmation": ("confirmed", "Confirmation reached"),
+            "confirm": ("confirmed", "Confirmation reached"),
+            "invalidation": ("invalidated", "Invalidation reached"),
+            "invalidate": ("invalidated", "Invalidation reached"),
+            "target": ("completed", "Target reached"),
+        }
+        record_event(plan, event_type, str(signal.get("description") or signal.get("condition") or ""), "market", signal)
+        target = transitions.get(event_type)
+        if target:
+            try:
+                transition(plan, target[0], target[1], "market", signal)
+            except ValueError:
+                logger.info("Hypothesis %s retained state after %s event", plan.get("id"), event_type)
+        plan_matcher._persist()
+        return event_type, {"status": normalize_status(plan.get("hypothesis_status")), "event_type": event_type}
+
     def _run_plan(plan: dict, signal: dict) -> dict:
         """Execute a matched plan and notify. Returns the execution result."""
         result = mt5_handler.execute_plan(plan, signal)
