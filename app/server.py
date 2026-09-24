@@ -339,6 +339,15 @@ def create_app(matcher=None, handler=None, notifier=None) -> Flask:
             fingerprint = f"tv:{symbol}:{payload.get('action') or payload.get('direction')}:{payload.get('price')}"
             _register_signal(fingerprint)
 
+            # Hypothesis observation is deliberately evaluated before legacy
+            # execution matching. Alert/observe hypotheses never reach MT5.
+            hypothesis = plan_matcher.match_hypothesis(payload)
+            if hypothesis is not None and str(hypothesis.get("execution_mode", "alert")).strip().lower() != "auto_execute":
+                event_type, state = _record_hypothesis_market_event(hypothesis, payload)
+                return jsonify({"status": "observed", "matched": True, "executed": False,
+                                "hypothesis": True, "plan_id": hypothesis.get("id"),
+                                "event_type": event_type, "hypothesis_status": state.get("status") if state else normalize_status(hypothesis.get("hypothesis_status"))})
+
             plan = plan_matcher.match(payload)
             if plan is None:
                 try:
@@ -386,6 +395,16 @@ def create_app(matcher=None, handler=None, notifier=None) -> Flask:
 
             fingerprint = f"mt5:{object_name}:{payload.get('event')}:{payload.get('price')}"
             _register_signal(fingerprint)
+
+            hypothesis = plan_matcher.match_hypothesis(payload)
+            if hypothesis is not None and str(hypothesis.get("execution_mode", "alert")).strip().lower() != "auto_execute":
+                signal = dict(payload)
+                signal.setdefault("symbol", hypothesis.get("symbol"))
+                signal.setdefault("timeframe", hypothesis.get("timeframe"))
+                event_type, state = _record_hypothesis_market_event(hypothesis, signal)
+                return jsonify({"status": "observed", "matched": True, "executed": False,
+                                "hypothesis": True, "plan_id": hypothesis.get("id"),
+                                "event_type": event_type, "hypothesis_status": state.get("status") if state else normalize_status(hypothesis.get("hypothesis_status"))})
 
             plan = plan_matcher.match_by_object(object_name)
             if plan is None:
