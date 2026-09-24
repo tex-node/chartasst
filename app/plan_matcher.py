@@ -323,3 +323,30 @@ class PlanMatcher:
                 except (IndexError, ValueError):
                     continue
         return f"plan_{max_n + 1:03d}"
+
+    def process_hypothesis_event(self, plan_id: str, event: dict) -> dict | None:
+        """Record a market event and advance an explicitly typed hypothesis."""
+        plan = self.get_plan(plan_id)
+        if not plan:
+            return None
+        from app.hypothesis_state import record_event, transition, normalize_status
+        event = event if isinstance(event, dict) else {}
+        event_type = str(event.get("event_type") or event.get("type") or "development").strip().lower()
+        transitions = {
+            "trigger": ("developing", "Trigger reached"),
+            "confirmation": ("confirmed", "Confirmation reached"),
+            "confirm": ("confirmed", "Confirmation reached"),
+            "invalidation": ("invalidated", "Invalidation reached"),
+            "invalidate": ("invalidated", "Invalidation reached"),
+            "target": ("completed", "Target reached"),
+        }
+        record_event(plan, event_type, str(event.get("description") or event.get("condition") or ""), "market", event)
+        target = transitions.get(event_type)
+        if target:
+            try:
+                transition(plan, target[0], target[1], "market", event)
+            except ValueError:
+                logger.info("Hypothesis %s retained state after %s", plan_id, event_type)
+        with self._lock:
+            self._persist()
+        return {"plan": plan, "event_type": event_type, "hypothesis_status": normalize_status(plan.get("hypothesis_status", "watching"))}
