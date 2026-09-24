@@ -64,6 +64,12 @@
         <label>Bias<div class="bias"><button type="button" data-bias="bullish">↑ Bullish</button><button type="button" data-bias="bearish">↓ Bearish</button></div></label>
         <label>Thesis<input id="thesis" placeholder="What do you expect price to do?"></label>
         <div class="field-row"><label>Trigger<input id="trigger" placeholder="What must happen first?"></label><label>Confirmation<input id="confirmation" placeholder="What confirms the idea?"></label></div>
+<div class="condition-builder">
+  <div class="condition-head"><strong>Condition builder</strong><span class="muted tiny">Optional — make the rule explicit.</span></div>
+  <div class="condition-row"><select id="triggerTf"><option>H1</option><option>H4</option><option>D1</option><option>M15</option></select><select id="triggerOp"><option value="bar_close_above">Close above</option><option value="bar_close_below">Close below</option><option value="cross_above">Cross above</option><option value="cross_below">Cross below</option></select><input id="triggerLevel" placeholder="Level"></div>
+  <div class="condition-row"><select id="confirmTf"><option>H1</option><option>H4</option><option>D1</option><option>M15</option></select><select id="confirmOp"><option value="bar_close_above">Close above</option><option value="bar_close_below">Close below</option></select><input id="confirmLevel" placeholder="Confirmation level"></div>
+  <div class="condition-row"><select id="invalidTf"><option>H1</option><option>H4</option><option>D1</option><option>M15</option></select><select id="invalidOp"><option value="bar_close_below">Close below</option><option value="bar_close_above">Close above</option></select><input id="invalidLevel" placeholder="Invalidation level"></div>
+</div>
         <div class="field-row"><label>Invalidation<input id="invalidation" placeholder="What proves you wrong?"></label><label>Target<input id="target" placeholder="Where are you expecting price to go?"></label></div>
         <label>Time window<select id="timeWindow"><option>This week</option><option>Today</option><option>London session</option><option>New York session</option><option>Custom</option></select></label>
       </div>
