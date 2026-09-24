@@ -29,6 +29,7 @@ import time
 from flask import Flask, jsonify, request
 
 from app.gui import register_gui
+from app.hypothesis_state import normalize_status, record_event, transition
 
 from app import runtime
 from app.config import Config
