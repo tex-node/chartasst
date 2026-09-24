@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ChartAsst — Market Hypotheses</title>
+  <link rel="stylesheet" href="{{ url_for('chartasst_gui.static', filename='chartasst.css') }}">
+</head>
+<body>
+  <aside class="rail">
+    <div class="brand"><span class="brand-dot"></span><span>ChartAsst</span></div>
+    <nav>
+      <button class="nav active" data-view="plan">◉ <span>My Plan</span></button>
+      <button class="nav" data-view="watch">◌ <span>Watch</span></button>
+      <button class="nav" data-view="review">✓ <span>Review</span></button>
+    </nav>
+    <div class="rail-foot"><span id="serverDot" class="status-dot"></span> Engine online</div>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">WEEKLY MARKET PLAN</div>
+        <h1 id="pageTitle">My hypotheses</h1>
+      </div>
+      <div class="top-actions">
+        <button class="icon-btn" id="refreshBtn" title="Refresh">↻</button>
+        <button class="primary" id="addBtn">＋ Add hypothesis</button>
+      </div>
+    </header>
+
+    <section id="planView" class="view">
+      <div class="summary" id="summary"></div>
+      <div id="hypotheses" class="cards"></div>
+    </section>
+
+    <section id="watchView" class="view hidden">
+      <div class="section-head"><div><div class="eyebrow">LIVE FOLLOWING</div><h2>What is happening to your plans?</h2></div></div>
+      <div id="watchCards" class="cards"></div>
+    </section>
+
+    <section id="reviewView" class="view hidden">
+      <div class="section-head"><div><div class="eyebrow">WEEKLY REVIEW</div><h2>What happened?</h2></div></div>
+      <div id="reviewCards" class="cards"></div>
+    </section>
+  </main>
+
+  <dialog id="planDialog">
+    <form method="dialog" id="planForm">
+      <div class="modal-head"><div><div class="eyebrow">NEW HYPOTHESIS</div><h2>What do you think will happen?</h2></div><button class="icon-btn" value="cancel">×</button></div>
+      <div class="mode-switch"><button type="button" class="mode active" data-mode="form">Build visually</button><button type="button" class="mode" data-mode="voice">🎙 Tell ChartAsst</button></div>
+
+      <div id="voicePane" class="hidden voice-pane">
+        <button type="button" id="micBtn" class="mic">●</button>
+        <div><strong id="voiceState">Tap to speak</strong><p>Example: “I’m bullish on gold this week. If it reclaims last week’s low on H1, I’m looking for 3780. Invalidate below the low.”</p></div>
+        <textarea id="transcript" placeholder="Your spoken plan appears here…"></textarea>
+      </div>
+
+      <div id="formPane">
+        <div class="field-row">
+          <label>Instrument<select id="symbol"><option>XAUUSD</option><option>EURUSD</option><option>GBPUSD</option><option>USDJPY</option><option>NAS100</option><option>US30</option><option>BTCUSD</option></select></label>
+          <label>Timeframe<select id="timeframe"><option>H1</option><option>H4</option><option>D1</option><option>M15</option><option>M5</option></select></label>
+        </div>
+        <label>Bias<div class="bias"><button type="button" data-bias="bullish">↑ Bullish</button><button type="button" data-bias="bearish">↓ Bearish</button></div></label>
+        <label>Thesis<input id="thesis" placeholder="What do you expect price to do?"></label>
+        <div class="field-row"><label>Trigger<input id="trigger" placeholder="What must happen first?"></label><label>Confirmation<input id="confirmation" placeholder="What confirms the idea?"></label></div>
+        <div class="field-row"><label>Invalidation<input id="invalidation" placeholder="What proves you wrong?"></label><label>Target<input id="target" placeholder="Where are you expecting price to go?"></label></div>
+        <label>Time window<select id="timeWindow"><option>This week</option><option>Today</option><option>London session</option><option>New York session</option><option>Custom</option></select></label>
+      </div>
+      <div class="preview" id="preview"><span class="muted">Your hypothesis will appear here before it is saved.</span></div>
+      <div class="modal-actions"><button type="button" class="secondary" id="cancelBtn">Cancel</button><button type="submit" class="primary">✓ Watch this hypothesis</button></div>
+    </form>
+  </dialog>
+  <script src="{{ url_for('chartasst_gui.static', filename='chartasst.js') }}"></script>
+</body>
+</html>
