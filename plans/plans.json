@@ -1,0 +1,49 @@
+{
+  "plans": [
+    {
+      "id": "plan_001",
+      "name": "EURUSD H1 Resistance Breakout",
+      "symbol": "EURUSD",
+      "timeframe": "H1",
+      "condition": "Price breaks above 1.0850 resistance",
+      "object_name": "Resistance_1.0850",
+      "action": "buy",
+      "volume": 0.01,
+      "sl_points": 200,
+      "tp_points": 400,
+      "status": "active",
+      "notes": "Wait for H1 close above 1.0850 before entering.",
+      "created_at": "2026-09-01T08:00:00+00:00"
+    },
+    {
+      "id": "plan_002",
+      "name": "GBPUSD H1 Support Breakdown",
+      "symbol": "GBPUSD",
+      "timeframe": "H1",
+      "condition": "Price breaks below 1.2600 support",
+      "object_name": "Support_1.2600",
+      "action": "sell",
+      "volume": 0.01,
+      "sl_points": 250,
+      "tp_points": 500,
+      "status": "active",
+      "notes": "Sell on the retest of 1.2600 from below.",
+      "created_at": "2026-09-10T12:30:00+00:00"
+    },
+    {
+      "id": "plan_003",
+      "name": "XAUUSD H4 Minor",
+      "symbol": "XAUUSD",
+      "timeframe": "H4",
+      "condition": "Example of a disabled plan (kept for reference)",
+      "object_name": "Trend_Line_A",
+      "action": "buy",
+      "volume": 0.01,
+      "sl_points": 300,
+      "tp_points": 600,
+      "status": "disabled",
+      "notes": "Disabled plans are ignored by the matcher.",
+      "created_at": "2026-06-01T09:00:00+00:00"
+    }
+  ]
+}

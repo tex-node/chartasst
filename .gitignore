@@ -1,0 +1,61 @@
+# --- Secrets ---
+# NEVER commit your real .env file. It holds broker credentials and API keys.
+.env
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Test / coverage ---
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.coverage.*
+
+# --- Logs ---
+logs/
+*.log
+
+# --- Obsidian local vault (if synced inside the repo) ---
+obsidian_vault/
+
+# --- Editor / OS ---
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- MQL5 compiled artifacts (build output; the .mq5 source is tracked) ---
+*.ex4
+*.ex5
+
+# --- Local runtime state ---
+# Plan files can contain trade ideas; keep the seed template but ignore user edits.
+plans/plans.local.json

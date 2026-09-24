@@ -1,0 +1,9 @@
+# NOTE: MetaTrader5 5.0.45 has no wheel for Python 3.12. We require >= 5.0.45
+# so both Python 3.11 (5.0.45+) and 3.12 (5.0.47+) can install a working build.
+Flask==3.0.0
+MetaTrader5>=5.0.45
+requests==2.31.0
+python-dotenv==1.0.0
+notion-client==2.2.1
+pytest==7.4.0
+pytest-mock==3.12.0
