@@ -28,6 +28,8 @@ import time
 
 from flask import Flask, jsonify, request
 
+from app.gui import register_gui
+
 from app import runtime
 from app.config import Config
 from app.mt5_handler import MT5Handler, describe_retcode
@@ -87,6 +89,7 @@ def create_app(matcher=None, handler=None, notifier=None) -> Flask:
     plan_matcher = matcher if matcher is not None else PlanMatcher()
     mt5_handler = handler if handler is not None else MT5Handler()
     notifier_obj = notifier if notifier is not None else Notifier()
+    register_gui(app, plan_matcher)
 
     # --- Startup notification -------------------------------------------
     # A one-line "I'm alive" ping so an NSSM restart / VPS reboot is visible.
