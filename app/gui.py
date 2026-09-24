@@ -38,7 +38,7 @@ def register_gui(app, matcher):
             "notes": data.get("notes", ""), "action": action,
             "object_name": data.get("object_name", ""), "volume": data.get("volume"),
             "sl_points": data.get("sl_points"), "tp_points": data.get("tp_points"),
-            "status": "active", "hypothesis_status": "watching", "execution_mode": data.get("execution_mode", "alert"),
+            "status": "active" if str(data.get("execution_mode", "alert")).strip().lower() == "auto_execute" else "disabled", "hypothesis_status": "watching", "execution_mode": data.get("execution_mode", "alert"),
             "hypothesis": {
                 "thesis": data.get("thesis", ""), "trigger": data.get("trigger", ""),
                 "confirmation": data.get("confirmation", ""), "invalidation": data.get("invalidation", ""),
@@ -60,7 +60,7 @@ def register_gui(app, matcher):
         try: transition(p, target, data.get("reason", ""), "user")
         except ValueError as exc: return jsonify({"error": str(exc)}), 409
         # Keep legacy matcher eligibility separate from hypothesis lifecycle.
-        p["status"] = "active" if target in ("watching", "developing", "confirmed", "paused") and target != "paused" else ("disabled" if target == "paused" else target)
+        p["status"] = "active" if str(p.get("execution_mode", "alert")).strip().lower() == "auto_execute" and target in ("watching", "developing", "confirmed") else ("disabled" if target in ("watching", "developing", "confirmed", "paused") else target)
         matcher._persist()
         return jsonify({"hypothesis": _public(p)})
     @bp.post("/api/hypotheses/<plan_id>/events")
