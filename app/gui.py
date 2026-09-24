@@ -71,6 +71,18 @@ def register_gui(app, matcher):
         event = record_event(p, str(data.get("type", "note")), str(data.get("description", "")), str(data.get("source", "user")), data.get("metadata") or {})
         matcher._persist()
         return jsonify({"event": event, "hypothesis": _public(p)})
+    @bp.post("/api/hypotheses/<plan_id>/market-event")
+    def hypothesis_market_event(plan_id):
+        data = request.get_json(silent=True) or {}
+        result = matcher.process_hypothesis_event(plan_id, data)
+        if not result:
+            return jsonify({"error": "Hypothesis not found."}), 404
+        return jsonify({
+            "hypothesis": _public(result["plan"]),
+            "event_type": result["event_type"],
+            "hypothesis_status": result["hypothesis_status"],
+        })
+
     @bp.get("/api/summary")
     def summary():
         counts = {state: 0 for state in STATES}
