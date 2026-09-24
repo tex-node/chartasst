@@ -2,6 +2,7 @@
 from __future__ import annotations
 from flask import Blueprint, jsonify, render_template, request
 from app.hypothesis_state import STATES, normalize_status, transition, record_event
+from app.condition_engine import evaluate_hypothesis
 from app.utils import utc_now_iso
 
 def _public(p):
@@ -44,7 +45,7 @@ def register_gui(app, matcher):
                 "confirmation": data.get("confirmation", ""), "invalidation": data.get("invalidation", ""),
                 "target": data.get("target", ""), "time_window": data.get("time_window", "This week"),
             },
-            "events": [], "created_at": timestamp, "updated_at": timestamp,
+            "conditions": data.get("conditions") or {}, "events": [], "created_at": timestamp, "updated_at": timestamp,
         }
         record_event(h, "created", "Hypothesis created", "user")
         try: created = matcher.add_plan(h)
@@ -82,6 +83,14 @@ def register_gui(app, matcher):
             "event_type": result["event_type"],
             "hypothesis_status": result["hypothesis_status"],
         })
+
+    @bp.post("/api/hypotheses/<plan_id>/evaluate")
+    def evaluate_market(plan_id):
+        p = matcher.get_plan(plan_id)
+        if not p: return jsonify({"error": "Hypothesis not found."}), 404
+        market = request.get_json(silent=True) or {}
+        evaluation = evaluate_hypothesis(p, market)
+        return jsonify({"plan_id": plan_id, "evaluation": evaluation})
 
     @bp.get("/api/summary")
     def summary():
