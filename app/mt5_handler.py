@@ -234,6 +234,40 @@ class MT5Handler:
             logger.error("Error selecting symbol %s: %s", symbol, exc)
             return False
 
+    def get_market_context(self, symbol: str, timeframe: str, count: int = 10) -> dict:
+        """Return normalized OHLC market context for hypothesis evaluation."""
+        from app.market_adapter import TIMEFRAME_MAP, build_market_context
+        if not self._available or not self.is_connected():
+            return {"symbol": symbol, "timeframe": timeframe, "error": "MT5 is not connected."}
+        tf_name = TIMEFRAME_MAP.get(str(timeframe).strip().upper())
+        if not tf_name or not hasattr(self.mt5, tf_name):
+            return {"symbol": symbol, "timeframe": timeframe, "error": "Unsupported timeframe."}
+        resolved = self._resolve_symbol(symbol)
+        if not self._ensure_symbol(resolved):
+            return {"symbol": symbol, "timeframe": timeframe, "error": "Symbol unavailable."}
+        try:
+            tf = getattr(self.mt5, tf_name)
+            rows = self.mt5.copy_rates_from_pos(resolved, tf, 0, max(int(count), 3))
+            if rows is None:
+                return {"symbol": symbol, "timeframe": timeframe, "error": "No market bars returned."}
+
+            def normalize(items):
+                return [
+                    {"time": row["time"], "open": row["open"], "high": row["high"],
+                     "low": row["low"], "close": row["close"]}
+                    for row in items
+                ]
+
+            recent = normalize(list(rows))
+            recent.sort(key=lambda x: x["time"])
+            # Pull the two completed daily bars and two completed weekly bars.
+            drows = self.mt5.copy_rates_from_pos(resolved, getattr(self.mt5, "TIMEFRAME_D1"), 1, 1) or []
+            wrows = self.mt5.copy_rates_from_pos(resolved, getattr(self.mt5, "TIMEFRAME_W1"), 1, 1) or []
+            return build_market_context(resolved, timeframe, recent, normalize(list(drows)), normalize(list(wrows)))
+        except Exception as exc:
+            logger.error("Market context failed for %s %s: %s", symbol, timeframe, exc)
+            return {"symbol": symbol, "timeframe": timeframe, "error": str(exc)}
+
     # ------------------------------------------------------------------ #
     # Safety guard
     # ------------------------------------------------------------------ #
