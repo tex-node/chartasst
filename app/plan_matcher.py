@@ -96,6 +96,16 @@ class PlanMatcher:
         """Alias for :meth:`load` to make intent explicit at call sites."""
         return self.load()
 
+    def snapshot_plans(self) -> list[dict]:
+        """Return a thread-safe shallow copy of the plans list.
+
+        Used by the background observer so it iterates a consistent snapshot
+        under the same lock that mutations take, instead of reading the live
+        list while it may be changing.
+        """
+        with self._lock:
+            return list(self.plans)
+
     def _persist(self) -> None:
         """Write the current in-memory plans back to disk (locked caller)."""
         save_json(self.plans_path, {"plans": self.plans})

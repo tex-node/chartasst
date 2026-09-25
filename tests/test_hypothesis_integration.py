@@ -501,3 +501,56 @@ def test_raw_webhook_paused_hypothesis_is_not_advanced(tmp_path, monkeypatch):
     body = resp.get_json()
     assert body["status"] == "received" and body["matched"] is False
     assert matcher.get_plan("hyp_001")["hypothesis_status"] == "paused"
+
+
+# --------------------------------------------------------------------------
+# Lock-consistent snapshot + notification at-most-once
+# --------------------------------------------------------------------------
+def test_snapshot_plans_returns_independent_copy(tmp_path):
+    matcher = make_matcher(
+        tmp_path, [hypothesis({"trigger": {"type": "close_above", "timeframe": "H1", "level": 100}})]
+    )
+    snapshot = matcher.snapshot_plans()
+    assert [p["id"] for p in snapshot] == [p["id"] for p in matcher.plans]
+
+    # Mutating the returned list must never affect the matcher's live list.
+    snapshot.clear()
+    assert matcher.plans
+    snapshot2 = matcher.snapshot_plans()
+    snapshot2.append({"id": "ghost"})
+    assert all(p.get("id") != "ghost" for p in matcher.plans)
+
+
+def test_repeated_identical_observation_notifies_once(tmp_path, monkeypatch):
+    """Two identical bar-close observations must not double-notify the trigger."""
+    monkeypatch.setattr(Config, "API_KEY", API_KEY)
+    matcher = make_matcher(
+        tmp_path,
+        [hypothesis({"trigger": {"type": "close_above", "timeframe": "H1", "level": 100},
+                      "invalidation": {"type": "close_below", "timeframe": "H1", "level": 50}})],
+    )
+    notifier = _Notifier()
+    app = create_app(matcher=matcher, handler=_Handler(), notifier=notifier)
+    app.testing = True
+    client = app.test_client()
+
+    payload = {"symbol": "XAUUSD", "timeframe": "H1", "event": "bar_close",
+               "close": 105, "price": 105,
+               "timestamp": "2026-09-25T11:00:00+00:00", "action": "buy"}
+
+    first = client.post("/webhook/tradingview", json=payload, headers=HEADERS)
+    assert first.status_code == 200
+    assert first.get_json()["status"] == "observed"
+
+    # Replay the same completed bar.
+    second = client.post("/webhook/tradingview", json=payload, headers=HEADERS)
+    assert second.status_code == 200
+
+    # A newer completed bar still must not re-trigger (state already developed).
+    newer = dict(payload, timestamp="2026-09-25T12:00:00+00:00")
+    third = client.post("/webhook/tradingview", json=newer, headers=HEADERS)
+    assert third.status_code == 200
+
+    # Exactly one lifecycle notification fired, and only once.
+    assert notifier.events == [("hyp_001", "trigger", "developing")]
+    assert matcher.get_plan("hyp_001")["hypothesis_status"] == "developing"

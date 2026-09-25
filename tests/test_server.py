@@ -50,6 +50,11 @@ class FakeMatcher:
     def get_active_plans(self):
         return [self.plan] if self.plan else []
 
+    def snapshot_plans(self):
+        # The background observer reads a lock-consistent snapshot; the real
+        # PlanMatcher returns list(self.plans) here.
+        return list(self.plans)
+
     def get_stale_plans(self, max_age_days=30):
         return self.stale
 

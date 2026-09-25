@@ -121,17 +121,20 @@ def bar_observation_key(symbol: str, timeframe: str, context: dict) -> tuple[str
     )
 
 
-def _mark_bar_evaluated(
-    key, evaluated_bars, evaluated_bars_lock, max_size: int = MAX_EVALUATED_BARS
-) -> bool:
-    """Record ``key``; return ``True`` when it had already been evaluated."""
+def _bar_already_evaluated(key, evaluated_bars, evaluated_bars_lock) -> bool:
+    """Return True when this completed bar was already *successfully* evaluated."""
     with evaluated_bars_lock:
-        if key in evaluated_bars:
-            return True
+        return key in evaluated_bars
+
+
+def _remember_bar_evaluated(
+    key, evaluated_bars, evaluated_bars_lock, max_size: int = MAX_EVALUATED_BARS
+) -> None:
+    """Record a completed bar as evaluated in the bounded cache."""
+    with evaluated_bars_lock:
         evaluated_bars.add(key)
         if len(evaluated_bars) > max_size:
             evaluated_bars.pop()
-        return False
 
 
 def run_hypothesis_observer_cycle(
@@ -146,13 +149,16 @@ def run_hypothesis_observer_cycle(
 
     For each unique ``(symbol, timeframe)`` group of eligible hypotheses, fetch
     the market context **once** and evaluate the whole group against that single
-    snapshot. A completed bar is evaluated at most once per
-    ``(symbol, timeframe, timestamp)`` via ``evaluated_bars``.
+    snapshot. A completed bar is marked as evaluated **only after a successful
+    evaluation**, so it is processed at most once per
+    ``(symbol, timeframe, timestamp)`` and a transient failure is retried on a
+    later cycle rather than permanently suppressed.
 
     Returns a mapping ``(symbol, timeframe) -> observations`` for groups that
     were actually evaluated this cycle. A group is skipped - without affecting
     any other group - when its context fetch raises/returns an error, when its
-    completed bar was already evaluated, or when its evaluation callback raises.
+    completed bar was already evaluated, or when its evaluation callback raises
+    (that last case is retried on the next cycle).
     """
     if evaluated_bars is None:
         evaluated_bars = set()
@@ -178,19 +184,24 @@ def run_hypothesis_observer_cycle(
             )
             continue
         key = bar_observation_key(symbol, timeframe, context)
-        if key is not None and _mark_bar_evaluated(
-            key, evaluated_bars, evaluated_bars_lock, max_evaluated_bars
-        ):
+        if key is not None and _bar_already_evaluated(key, evaluated_bars, evaluated_bars_lock):
             continue
         try:
             observations = evaluate_hypotheses(context)
         except Exception as exc:
-            # Evaluation failed for this group only; do not abort the cycle.
+            # Evaluation failed for this group only. Do NOT mark the bar, so a
+            # transient failure is retried on a later cycle instead of being
+            # permanently suppressed.
             logger.error(
                 "Hypothesis observer evaluation failed for %s %s: %s",
                 symbol, timeframe, exc,
             )
             continue
+        # Mark the completed bar as done only after a successful evaluation.
+        if key is not None:
+            _remember_bar_evaluated(
+                key, evaluated_bars, evaluated_bars_lock, max_evaluated_bars
+            )
         results[(symbol, timeframe)] = observations
         if observations:
             logger.info(
@@ -724,7 +735,7 @@ def create_app(matcher=None, handler=None, notifier=None) -> Flask:
         while not observer_stop.is_set():
             try:
                 run_hypothesis_observer_cycle(
-                    list(plan_matcher.plans),
+                    plan_matcher.snapshot_plans(),
                     mt5_handler,
                     _evaluate_hypotheses,
                     evaluated_bars=evaluated_bars,

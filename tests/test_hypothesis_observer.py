@@ -363,3 +363,39 @@ def test_context_error_dict_still_isolates_group():
     results = run_hypothesis_observer_cycle(plans, handler, EvaluateSpy())
     assert ("XAUUSD", "H1") not in results
     assert ("EURUSD", "H1") in results
+
+
+# --------------------------------------------------------------------------
+# PHASE 4 (robustness) - the bar is marked only AFTER a successful evaluation,
+# so a transient failure is retried on the next cycle instead of being lost.
+# --------------------------------------------------------------------------
+def test_evaluation_failure_is_retried_then_bar_marked():
+    plans = [hypothesis("x", "XAUUSD", "H1")]
+    ctx = {"symbol": "XAUUSD", "timeframe": "H1", "event": "bar_close",
+           "timestamp": "2026-09-25T10:00:00+00:00", "close": 101, "price": 101}
+    handler = _BySymbolHandler({("XAUUSD", "H1"): ctx})
+
+    state = {"calls": 0}
+
+    def evaluate(context):
+        state["calls"] += 1
+        if state["calls"] == 1:
+            raise RuntimeError("transient downstream failure")
+        return ["observation"]
+
+    evaluated_bars: set = set()
+    lock = threading.Lock()
+
+    first = run_hypothesis_observer_cycle(plans, handler, evaluate, evaluated_bars, lock)
+    assert first == {}                    # failed -> not returned
+    assert evaluated_bars == set()        # and crucially NOT marked as evaluated
+
+    second = run_hypothesis_observer_cycle(plans, handler, evaluate, evaluated_bars, lock)
+    assert ("XAUUSD", "H1") in second     # retried and succeeded
+    # The completed bar (symbol, timeframe, timestamp) is marked only now.
+    assert ("XAUUSD", "H1", "2026-09-25T10:00:00+00:00") in evaluated_bars
+
+    third = run_hypothesis_observer_cycle(plans, handler, evaluate, evaluated_bars, lock)
+    assert third == {}                    # same completed bar now skipped
+    assert state["calls"] == 2            # third cycle did not re-evaluate
+
