@@ -260,7 +260,11 @@ class MT5Handler:
 
             recent = normalize(list(rows))
             recent.sort(key=lambda x: x["time"])
-            # Pull the two completed daily bars and two completed weekly bars.
+            # MT5 position 0 is the currently forming candle. Hypothesis
+            # evaluation is based on completed bars, so remove the live bar
+            # when enough history is available.
+            if len(recent) >= 3:
+                recent = recent[:-1]
             drows = self.mt5.copy_rates_from_pos(resolved, getattr(self.mt5, "TIMEFRAME_D1"), 1, 1)
             wrows = self.mt5.copy_rates_from_pos(resolved, getattr(self.mt5, "TIMEFRAME_W1"), 1, 1)
             drows = [] if drows is None else drows
