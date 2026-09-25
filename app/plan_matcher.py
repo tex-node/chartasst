@@ -372,3 +372,26 @@ class PlanMatcher:
         with self._lock:
             self._persist()
         return {"plan": plan, "event_type": event_type, "hypothesis_status": normalize_status(plan.get("hypothesis_status", "watching"))}
+
+    def evaluate_hypothesis_market(self, signal: dict) -> list[dict]:
+        """Evaluate all matching non-terminal hypotheses without execution."""
+        from app.condition_engine import evaluate_hypothesis
+        results = []
+        if not isinstance(signal, dict):
+            return results
+        symbol = str(signal.get("symbol", "")).strip().upper()
+        timeframe = str(signal.get("timeframe", "")).strip().upper()
+        with self._lock:
+            plans = list(self.plans)
+        for plan in plans:
+            if "hypothesis_status" not in plan or str(plan.get("symbol", "")).strip().upper() != symbol:
+                continue
+            if normalize_status(plan.get("hypothesis_status")) in ("invalidated", "completed", "expired", "paused"):
+                continue
+            plan_tf = str(plan.get("timeframe", "")).strip().upper()
+            if timeframe and plan_tf and timeframe != plan_tf:
+                continue
+            evaluation = evaluate_hypothesis(plan, signal)
+            if evaluation["matched"]:
+                results.append({"plan": plan, "evaluation": evaluation})
+        return results
