@@ -57,10 +57,31 @@ def evaluate_condition(condition: dict, market: dict) -> bool:
 
 
 def evaluate_hypothesis(hypothesis: dict, market: dict) -> dict:
-    """Evaluate trigger/confirmation/invalidation/target against market context."""
+    """Evaluate conditions in lifecycle order.
+
+    Invalidation is always eligible while a hypothesis is active. Trigger,
+    confirmation, and target are gated by the current hypothesis state so a
+    target cannot complete an idea that was never confirmed.
+    """
     specs = hypothesis.get("conditions") or {}
+    status = str(hypothesis.get("hypothesis_status", "watching")).strip().lower()
+    eligible = {"invalidation"}
+    if status == "watching":
+        eligible.add("trigger")
+    elif status == "developing":
+        eligible.add("confirmation")
+    elif status == "confirmed":
+        eligible.add("target")
+
     matches = [
         name for name in ("trigger", "confirmation", "invalidation", "target")
-        if isinstance(specs.get(name), dict) and evaluate_condition(specs[name], market)
+        if name in eligible
+        and isinstance(specs.get(name), dict)
+        and evaluate_condition(specs[name], market)
     ]
-    return {"matches": matches, "matched": bool(matches)}
+    return {
+        "matches": matches,
+        "matched": bool(matches),
+        "status": status,
+        "eligible": sorted(eligible),
+    }
