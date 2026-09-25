@@ -30,6 +30,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from app.hypothesis_state import normalize_status
 from app.utils import load_json, save_json, utc_now_iso
 
 logger = logging.getLogger(__name__)

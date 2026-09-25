@@ -18,16 +18,26 @@ REFERENCES = {
 
 
 def resolve_reference(reference: Any, market: dict) -> float | None:
-    """Resolve a symbolic reference from market context."""
+    """Resolve a symbolic reference from market context.
+
+    Prefers the canonical ``market["references"]`` mapping produced by
+    :func:`app.market_adapter.build_market_context` (where ``prev_day_high``,
+    ``prev_week_low``, ``session_high``, ... live), and falls back to a nested
+    ``market["context"]`` mapping or top-level keys for older callers.
+    """
     key = str(reference or "").strip().lower()
     if key not in REFERENCES or not isinstance(market, dict):
         return None
 
-    context = market.get("context")
-    if not isinstance(context, dict):
-        context = {}
+    references = market.get("references")
+    if isinstance(references, dict) and key in references:
+        value = references[key]
+    else:
+        context = market.get("context")
+        if not isinstance(context, dict):
+            context = {}
+        value = context.get(key, market.get(key))
 
-    value = context.get(key, market.get(key))
     try:
         return float(value)
     except (TypeError, ValueError):
