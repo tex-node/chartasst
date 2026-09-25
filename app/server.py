@@ -29,7 +29,7 @@ import time
 from flask import Flask, jsonify, request
 
 from app.gui import register_gui
-from app.hypothesis_state import normalize_status, record_event, transition
+from app.hypothesis_state import normalize_status
 
 from app import runtime
 from app.config import Config
@@ -150,8 +150,9 @@ def run_hypothesis_observer_cycle(
     ``(symbol, timeframe, timestamp)`` via ``evaluated_bars``.
 
     Returns a mapping ``(symbol, timeframe) -> observations`` for groups that
-    were actually evaluated this cycle. Groups skipped because of a context
-    error or a duplicate bar are absent.
+    were actually evaluated this cycle. A group is skipped - without affecting
+    any other group - when its context fetch raises/returns an error, when its
+    completed bar was already evaluated, or when its evaluation callback raises.
     """
     if evaluated_bars is None:
         evaluated_bars = set()
@@ -160,15 +161,36 @@ def run_hypothesis_observer_cycle(
 
     results: dict[tuple[str, str], list[dict]] = {}
     for (symbol, timeframe), group in group_observation_hypotheses(plans).items():
-        context = mt5_handler.get_market_context(symbol, timeframe)
+        # A failure on one (symbol, timeframe) group must never stop the
+        # remaining groups from being processed this cycle.
+        try:
+            context = mt5_handler.get_market_context(symbol, timeframe)
+        except Exception as exc:
+            logger.error(
+                "Hypothesis observer context fetch failed for %s %s: %s",
+                symbol, timeframe, exc,
+            )
+            continue
         if not context or context.get("error"):
+            logger.warning(
+                "Hypothesis observer skipped %s %s: %s",
+                symbol, timeframe, (context or {}).get("error", "no context"),
+            )
             continue
         key = bar_observation_key(symbol, timeframe, context)
         if key is not None and _mark_bar_evaluated(
             key, evaluated_bars, evaluated_bars_lock, max_evaluated_bars
         ):
             continue
-        observations = evaluate_hypotheses(context)
+        try:
+            observations = evaluate_hypotheses(context)
+        except Exception as exc:
+            # Evaluation failed for this group only; do not abort the cycle.
+            logger.error(
+                "Hypothesis observer evaluation failed for %s %s: %s",
+                symbol, timeframe, exc,
+            )
+            continue
         results[(symbol, timeframe)] = observations
         if observations:
             logger.info(
@@ -332,27 +354,26 @@ def create_app(matcher=None, handler=None, notifier=None) -> Flask:
         return observations
 
     def _record_hypothesis_market_event(plan: dict, signal: dict) -> tuple[str, dict | None]:
-        """Record an explicit market event and advance a GUI hypothesis."""
+        """Record an explicit market event and advance a hypothesis.
+
+        Delegates to :meth:`PlanMatcher.process_hypothesis_event` so this raw
+        webhook/GUI path shares the *same* lifecycle contract as the matcher
+        path: identical required-state gating, terminal protection and
+        duplicate-event idempotency. No transition rules are duplicated here.
+        """
         if "hypothesis_status" not in plan:
             return "legacy", None
-        event_type = str(signal.get("event_type") or signal.get("hypothesis_event") or signal.get("condition_type") or "development").strip().lower()
-        transitions = {
-            "trigger": ("developing", "Trigger reached"),
-            "confirmation": ("confirmed", "Confirmation reached"),
-            "confirm": ("confirmed", "Confirmation reached"),
-            "invalidation": ("invalidated", "Invalidation reached"),
-            "invalidate": ("invalidated", "Invalidation reached"),
-            "target": ("completed", "Target reached"),
-        }
-        record_event(plan, event_type, str(signal.get("description") or signal.get("condition") or ""), "market", signal)
-        target = transitions.get(event_type)
-        if target:
-            try:
-                transition(plan, target[0], target[1], "market", signal)
-            except ValueError:
-                logger.info("Hypothesis %s retained state after %s event", plan.get("id"), event_type)
-        plan_matcher._persist()
-        return event_type, {"status": normalize_status(plan.get("hypothesis_status")), "event_type": event_type}
+        event_type = str(
+            signal.get("event_type") or signal.get("hypothesis_event")
+            or signal.get("condition_type") or "development"
+        ).strip().lower()
+        event = {"event_type": event_type, "source": "market", "market": signal}
+        result = plan_matcher.process_hypothesis_event(plan.get("id"), event)
+        if result is None:
+            return event_type, None
+        status = normalize_status(result.get("hypothesis_status"))
+        return event_type, {"status": status, "event_type": event_type,
+                            "ignored": bool(result.get("ignored"))}
 
     def _run_plan(plan: dict, signal: dict) -> dict:
         """Execute a matched plan and notify. Returns the execution result."""

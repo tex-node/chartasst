@@ -35,18 +35,57 @@ def evaluate_condition(condition: dict, market: dict) -> bool:
         return False
 
     level = _num(condition.get("level"))
-    if kind in {"price_above", "close_above", "reclaim_above"}:
-        price = _num(market.get("close") if kind != "price_above" else market.get("price"))
+
+    # --- simple level comparisons (single-bar, no prior-state gate) ------
+    if kind == "price_above":
+        price = _num(market.get("price"))
         return price is not None and level is not None and price > level
-    if kind in {"price_below", "close_below", "break_below"}:
-        price = _num(market.get("close") if kind != "price_below" else market.get("price"))
+    if kind == "price_below":
+        price = _num(market.get("price"))
         return price is not None and level is not None and price < level
+    if kind == "close_above":
+        price = _num(market.get("close"))
+        return price is not None and level is not None and price > level
+    if kind == "close_below":
+        price = _num(market.get("close"))
+        return price is not None and level is not None and price < level
+
+    # --- break: a decisive close beyond the level, no prior-state gate ---
+    # ``break_below`` keeps its established close-below contract; ``break_above``
+    # is added as the exact symmetric counterpart.
+    if kind == "break_above":
+        price = _num(market.get("close"))
+        return price is not None and level is not None and price > level
+    if kind == "break_below":
+        price = _num(market.get("close"))
+        return price is not None and level is not None and price < level
+
+    # --- reclaim: a *bar-close* re-take of a level from the other side ----
+    # reclaim_above  -> previous completed close was at/below the level AND
+    #                   the current close is above it.
+    # reclaim_below  -> previous completed close was at/above the level AND
+    #                   the current close is below it.
+    # Unlike ``break`` it requires prior-state evidence, so it never
+    # manufactures a reclaim when the previous close was already past the level.
+    if kind in ("reclaim_above", "reclaim_below"):
+        current = _num(market.get("close"))
+        previous = _num(market.get("previous_close"))
+        if previous is None:
+            previous = _num(market.get("previous_price"))
+        if None in (current, previous, level):
+            return False
+        if kind == "reclaim_above":
+            return previous <= level < current
+        return previous >= level > current
+
+    # --- cross: a tick/price transition through the level (distinct fields) -
     if kind == "cross_above":
         price, previous = _num(market.get("price")), _num(market.get("previous_price"))
         return None not in (price, previous, level) and previous <= level < price
     if kind == "cross_below":
         price, previous = _num(market.get("price")), _num(market.get("previous_price"))
         return None not in (price, previous, level) and previous >= level > price
+
     if kind == "bar_close_above":
         return str(market.get("event", "")).lower() == "bar_close" and _num(market.get("close")) is not None and level is not None and float(market["close"]) > level
     if kind == "bar_close_below":

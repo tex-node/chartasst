@@ -235,7 +235,9 @@ class PlanMatcher:
             for plan in self.plans:
                 if "hypothesis_status" not in plan:
                     continue
-                if normalize_status(plan.get("hypothesis_status")) in ("invalidated", "completed", "expired"):
+                if normalize_status(plan.get("hypothesis_status")) in (
+                    "invalidated", "completed", "expired", "paused",
+                ):
                     continue
                 if str(plan.get("symbol", "")).strip().upper() != symbol:
                     continue

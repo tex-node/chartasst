@@ -260,11 +260,21 @@ class MT5Handler:
 
             recent = normalize(list(rows))
             recent.sort(key=lambda x: x["time"])
-            # MT5 position 0 is the currently forming candle. Hypothesis
-            # evaluation is based on completed bars, so remove the live bar
-            # when enough history is available.
-            if len(recent) >= 3:
+            # MT5 position 0 is the currently forming candle. After sorting
+            # ascending, the newest element is that live bar - it is NEVER a
+            # completed bar, so it is always dropped regardless of how short
+            # the returned history is.
+            if recent:
                 recent = recent[:-1]
+            # With nothing completed left, there is no safe completed candle to
+            # report. Return an error rather than inventing context from the
+            # forming bar.
+            if len(recent) < 1:
+                return {
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "error": "Insufficient completed bars (only the forming candle was returned).",
+                }
             drows = self.mt5.copy_rates_from_pos(resolved, getattr(self.mt5, "TIMEFRAME_D1"), 1, 1)
             wrows = self.mt5.copy_rates_from_pos(resolved, getattr(self.mt5, "TIMEFRAME_W1"), 1, 1)
             drows = [] if drows is None else drows

@@ -325,3 +325,179 @@ def test_observer_cycle_uses_real_evaluate_hypothesis_market(tmp_path):
     observations = results[("XAUUSD", "H1")]
     assert observations
     assert observations[0]["evaluation"]["matches"] == ["trigger"]
+
+
+# --------------------------------------------------------------------------
+# PHASE 3 - one consistent lifecycle contract across every entry point
+# --------------------------------------------------------------------------
+def _mkt(timestamp, **fields):
+    return {"timestamp": timestamp, **fields}
+
+
+def test_process_confirmation_while_watching_is_ignored(tmp_path):
+    matcher = make_matcher(
+        tmp_path,
+        [hypothesis({"confirmation": {"type": "close_above", "timeframe": "H1", "level": 110}})],
+    )
+    result = matcher.process_hypothesis_event(
+        "hyp_001", {"event_type": "confirmation", "market": _mkt("T1", close=115)}
+    )
+    assert result.get("ignored") is True
+    # Confirmation must NOT skip WATCHING -> DEVELOPING.
+    assert matcher.get_plan("hyp_001")["hypothesis_status"] == "watching"
+
+
+def test_process_target_while_watching_is_ignored(tmp_path):
+    matcher = make_matcher(
+        tmp_path,
+        [hypothesis({"target": {"type": "price_above", "timeframe": "H1", "level": 120}})],
+    )
+    result = matcher.process_hypothesis_event(
+        "hyp_001", {"event_type": "target", "market": _mkt("T1", price=200)}
+    )
+    assert result.get("ignored") is True
+    assert matcher.get_plan("hyp_001")["hypothesis_status"] == "watching"
+
+
+def test_process_full_lifecycle_sequence(tmp_path):
+    matcher = make_matcher(
+        tmp_path,
+        [hypothesis({
+            "trigger": {"type": "close_above", "timeframe": "H1", "level": 100},
+            "confirmation": {"type": "close_above", "timeframe": "H1", "level": 110},
+            "target": {"type": "price_above", "timeframe": "H1", "level": 120},
+        })],
+    )
+    matcher.process_hypothesis_event("hyp_001", {"event_type": "trigger", "market": _mkt("T1", close=105)})
+    assert matcher.get_plan("hyp_001")["hypothesis_status"] == "developing"
+    matcher.process_hypothesis_event("hyp_001", {"event_type": "confirmation", "market": _mkt("T2", close=115)})
+    assert matcher.get_plan("hyp_001")["hypothesis_status"] == "confirmed"
+    matcher.process_hypothesis_event("hyp_001", {"event_type": "target", "market": _mkt("T3", price=125)})
+    assert matcher.get_plan("hyp_001")["hypothesis_status"] == "completed"
+
+
+def test_terminal_state_cannot_progress(tmp_path):
+    matcher = make_matcher(
+        tmp_path,
+        [hypothesis({"trigger": {"type": "close_above", "timeframe": "H1", "level": 100}}, status="completed")],
+    )
+    result = matcher.process_hypothesis_event(
+        "hyp_001", {"event_type": "trigger", "market": _mkt("T1", close=105)}
+    )
+    assert result.get("ignored") is True
+    assert matcher.get_plan("hyp_001")["hypothesis_status"] == "completed"
+
+
+def test_duplicate_market_event_is_idempotent(tmp_path):
+    matcher = make_matcher(
+        tmp_path,
+        [hypothesis({"trigger": {"type": "close_above", "timeframe": "H1", "level": 100}})],
+    )
+    snap = {"symbol": "XAUUSD", "timeframe": "H1", "event": "bar_close",
+            "timestamp": "T1", "close": 105, "price": 105}
+
+    # First observation matches and advances the lifecycle.
+    first = matcher.evaluate_hypothesis_market(snap)
+    assert len(first) == 1 and first[0]["evaluation"]["matches"] == ["trigger"]
+    matcher.process_hypothesis_event("hyp_001", {"event_type": "trigger", "market": snap})
+    assert matcher.get_plan("hyp_001")["hypothesis_status"] == "developing"
+
+    # Replay the SAME completed bar: trigger is no longer eligible, so there is
+    # no second match, therefore no second transition and no second notification.
+    assert matcher.evaluate_hypothesis_market(snap) == []
+
+    # Even a direct re-process is gated to a no-op.
+    replay = matcher.process_hypothesis_event("hyp_001", {"event_type": "trigger", "market": snap})
+    assert replay.get("ignored") is True
+    assert matcher.get_plan("hyp_001")["hypothesis_status"] == "developing"
+
+    # Exactly one market trigger event was recorded.
+    trigger_events = [
+        e for e in matcher.get_plan("hyp_001")["events"]
+        if e.get("type") == "trigger" and e.get("source") == "market"
+    ]
+    assert len(trigger_events) == 1
+
+
+def test_invalidation_allowed_from_active_states(tmp_path):
+    for status in ("watching", "developing", "confirmed"):
+        matcher = make_matcher(
+            tmp_path,
+            [hypothesis({"invalidation": {"type": "close_below", "timeframe": "H1", "level": 50}}, status=status)],
+        )
+        matcher.process_hypothesis_event(
+            "hyp_001", {"event_type": "invalidation", "market": _mkt("T", close=10)}
+        )
+        assert matcher.get_plan("hyp_001")["hypothesis_status"] == "invalidated"
+
+
+def test_paused_is_excluded_from_all_hypothesis_entry_points(tmp_path):
+    matcher = make_matcher(
+        tmp_path,
+        [hypothesis({"trigger": {"type": "close_above", "timeframe": "H1", "level": 100}}, status="paused")],
+    )
+    # Not matched directly...
+    assert matcher.match_hypothesis({"symbol": "XAUUSD", "timeframe": "H1"}) is None
+    # ...not evaluated by the market path...
+    assert matcher.evaluate_hypothesis_market(
+        {"symbol": "XAUUSD", "timeframe": "H1", "event": "bar_close", "close": 105, "timestamp": "T"}
+    ) == []
+    # ...and its process is ignored (not in an eligible state).
+    result = matcher.process_hypothesis_event(
+        "hyp_001", {"event_type": "trigger", "market": _mkt("T", close=105)}
+    )
+    assert result.get("ignored") is True
+    assert matcher.get_plan("hyp_001")["hypothesis_status"] == "paused"
+
+
+def test_raw_webhook_confirmation_does_not_skip_developing(tmp_path, monkeypatch):
+    """The webhook raw-event path shares the same gating as the matcher path."""
+    monkeypatch.setattr(Config, "API_KEY", API_KEY)
+    matcher = make_matcher(
+        tmp_path,
+        [hypothesis({"confirmation": {"type": "close_above", "timeframe": "H1", "level": 110}})],
+    )
+    notifier = _Notifier()
+    app = create_app(matcher=matcher, handler=_Handler(), notifier=notifier)
+    app.testing = True
+
+    resp = app.test_client().post(
+        "/webhook/mt5",
+        json={
+            "object_name": "Resistance_1.0",
+            "symbol": "XAUUSD",
+            "timeframe": "H1",
+            "event": "cross",
+            "event_type": "confirmation",
+        },
+        headers=HEADERS,
+    )
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["status"] == "observed"
+    # Confirmation while watching is gated -> status stays watching (never skipped).
+    assert body["hypothesis_status"] == "watching"
+    assert matcher.get_plan("hyp_001")["hypothesis_status"] == "watching"
+    assert notifier.events == []
+
+
+def test_raw_webhook_paused_hypothesis_is_not_advanced(tmp_path, monkeypatch):
+    monkeypatch.setattr(Config, "API_KEY", API_KEY)
+    matcher = make_matcher(
+        tmp_path,
+        [hypothesis({"trigger": {"type": "close_above", "timeframe": "H1", "level": 100}}, status="paused")],
+    )
+    app = create_app(matcher=matcher, handler=_Handler(), notifier=_Notifier())
+    app.testing = True
+
+    resp = app.test_client().post(
+        "/webhook/mt5",
+        json={"object_name": "X", "symbol": "XAUUSD", "timeframe": "H1", "event": "cross", "event_type": "trigger"},
+        headers=HEADERS,
+    )
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["status"] == "received" and body["matched"] is False
+    assert matcher.get_plan("hyp_001")["hypothesis_status"] == "paused"

@@ -283,3 +283,83 @@ def test_bar_observation_key_normalization():
     )
     assert bar_observation_key("XAUUSD", "H1", {"event": "tick", "timestamp": "T"}) is None
     assert bar_observation_key("XAUUSD", "H1", {"event": "bar_close"}) is None
+
+
+# --------------------------------------------------------------------------
+# PHASE 4 - a failure on one group must not abort the rest of the cycle
+# --------------------------------------------------------------------------
+class _RaisingCtxHandler:
+    """get_market_context raises for one symbol, succeeds for the others."""
+
+    def __init__(self, fail_symbol, context):
+        self.fail_symbol = fail_symbol.upper()
+        self.context = context
+
+    def get_market_context(self, symbol, timeframe):
+        if symbol.upper() == self.fail_symbol:
+            raise RuntimeError("boom-fetch")
+        return self.context
+
+
+class _BySymbolHandler:
+    """Returns a distinct context per (symbol, timeframe)."""
+
+    def __init__(self, mapping):
+        self.mapping = mapping
+
+    def get_market_context(self, symbol, timeframe):
+        return self.mapping[(symbol.upper(), timeframe.upper())]
+
+
+def test_context_exception_is_isolated_per_group(caplog):
+    caplog.set_level("ERROR", logger="app.server")
+    plans = [hypothesis("x", "XAUUSD", "H1"), hypothesis("e", "EURUSD", "H1")]
+    ok_context = {"symbol": "EURUSD", "timeframe": "H1", "event": "bar_close",
+                  "timestamp": "2026-09-25T11:00:00+00:00", "close": 101, "price": 101}
+    handler = _RaisingCtxHandler("XAUUSD", ok_context)
+    spy = EvaluateSpy()
+
+    results = run_hypothesis_observer_cycle(plans, handler, spy)
+
+    # The failing group is skipped; the healthy group is still evaluated.
+    assert ("XAUUSD", "H1") not in results
+    assert ("EURUSD", "H1") in results
+    assert spy.calls == [("EURUSD", "H1")]
+    assert any("context fetch failed for XAUUSD" in r.getMessage() and "boom-fetch" in r.getMessage()
+               for r in caplog.records)
+
+
+def test_evaluation_exception_is_isolated_per_group(caplog):
+    caplog.set_level("ERROR", logger="app.server")
+    plans = [hypothesis("x", "XAUUSD", "H1"), hypothesis("e", "EURUSD", "H1")]
+    ctxs = {
+        ("XAUUSD", "H1"): {"symbol": "XAUUSD", "timeframe": "H1", "event": "bar_close",
+                           "timestamp": "2026-09-25T10:00:00+00:00", "close": 101, "price": 101},
+        ("EURUSD", "H1"): {"symbol": "EURUSD", "timeframe": "H1", "event": "bar_close",
+                           "timestamp": "2026-09-25T10:00:00+00:00", "close": 101, "price": 101},
+    }
+
+    def evaluate(context):
+        if context["symbol"] == "XAUUSD":
+            raise RuntimeError("boom-eval")
+        return []
+
+    results = run_hypothesis_observer_cycle(plans, _BySymbolHandler(ctxs), evaluate)
+
+    assert ("XAUUSD", "H1") not in results
+    assert ("EURUSD", "H1") in results
+    assert any("evaluation failed for XAUUSD" in r.getMessage() and "boom-eval" in r.getMessage()
+               for r in caplog.records)
+
+
+def test_context_error_dict_still_isolates_group():
+    # An error-returning context (no exception) must not break sibling groups.
+    plans = [hypothesis("x", "XAUUSD", "H1"), hypothesis("e", "EURUSD", "H1")]
+    handler = _BySymbolHandler({
+        ("XAUUSD", "H1"): {"symbol": "XAUUSD", "timeframe": "H1", "error": "not connected"},
+        ("EURUSD", "H1"): {"symbol": "EURUSD", "timeframe": "H1", "event": "bar_close",
+                           "timestamp": "T", "close": 101, "price": 101},
+    })
+    results = run_hypothesis_observer_cycle(plans, handler, EvaluateSpy())
+    assert ("XAUUSD", "H1") not in results
+    assert ("EURUSD", "H1") in results
