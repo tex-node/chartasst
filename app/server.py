@@ -215,6 +215,8 @@ def create_app(matcher=None, handler=None, notifier=None) -> Flask:
                 event = {"event_type": event_type, "description": f"Condition matched: {event_type}", "source": "market", "market": signal}
                 result = plan_matcher.process_hypothesis_event(plan.get("id"), event)
                 new_status = result.get("hypothesis_status") if result else normalize_status(plan.get("hypothesis_status"))
+                if result and result.get("ignored"):
+                    continue
                 try:
                     notifier_obj.send_hypothesis_event(plan, event_type, signal, new_status)
                 except Exception as exc:
