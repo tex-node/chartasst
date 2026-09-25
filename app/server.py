@@ -594,18 +594,18 @@ def create_app(matcher=None, handler=None, notifier=None) -> Flask:
     evaluated_bars_lock = threading.Lock()
     MAX_EVALUATED_BARS = 2000
 
-    def _bar_observation_key(plan: dict, context: dict) -> tuple[str, str, str] | None:
+    def _bar_observation_key(symbol: str, timeframe: str, context: dict) -> tuple[str, str, str] | None:
         event = str(context.get("event", "")).strip().lower()
         timestamp = context.get("timestamp")
         if event not in ("bar_close", "bar_closed") or not timestamp:
             return None
         return (
-            str(plan.get("symbol", "")).strip().upper(),
-            str(plan.get("timeframe", "")).strip().upper(),
+            str(symbol).strip().upper(),
+            str(timeframe).strip().upper(),
             str(timestamp),
         )
 
-    def _already_evaluated_bar(key: tuple[str, str, str, str]) -> bool:
+    def _already_evaluated_bar(key: tuple[str, str, str]) -> bool:
         with evaluated_bars_lock:
             if key in evaluated_bars:
                 return True
@@ -617,26 +617,40 @@ def create_app(matcher=None, handler=None, notifier=None) -> Flask:
     def _hypothesis_observer():
         while not observer_stop.is_set():
             try:
+                # Group active hypotheses by market context. Each unique
+                # (symbol, timeframe) gets exactly one MT5 context fetch per
+                # observer cycle; all hypotheses in that group are then
+                # evaluated against the same snapshot.
+                groups: dict[tuple[str, str], list[dict]] = {}
                 for plan in list(plan_matcher.plans):
                     status = normalize_status(plan.get("hypothesis_status", "watching"))
                     if "hypothesis_status" not in plan or status in ("invalidated", "completed", "expired", "paused"):
                         continue
-                    context = mt5_handler.get_market_context(plan.get("symbol", ""), plan.get("timeframe", "H1"))
+                    symbol = str(plan.get("symbol", "")).strip().upper()
+                    timeframe = str(plan.get("timeframe", "H1")).strip().upper() or "H1"
+                    if not symbol:
+                        continue
+                    groups.setdefault((symbol, timeframe), []).append(plan)
+
+                for (symbol, timeframe), plans in groups.items():
+                    # One market-context fetch for this symbol/timeframe.
+                    context = mt5_handler.get_market_context(symbol, timeframe)
                     if context.get("error"):
                         continue
 
-                    bar_key = _bar_observation_key(plan, context)
+                    bar_key = _bar_observation_key(symbol, timeframe, context)
                     if bar_key is not None and _already_evaluated_bar(bar_key):
                         continue
 
                     observations = _evaluate_hypotheses(context)
                     if observations:
                         logger.info(
-                            "Hypothesis observer processed %d observation(s) for %s %s @ %s",
+                            "Hypothesis observer processed %d observation(s) for %s %s @ %s across %d hypothesis(es)",
                             len(observations),
-                            plan.get("symbol"),
-                            plan.get("timeframe"),
+                            symbol,
+                            timeframe,
                             context.get("timestamp"),
+                            len(plans),
                         )
             except Exception as exc:
                 logger.warning("Hypothesis observer cycle failed: %s", exc)
