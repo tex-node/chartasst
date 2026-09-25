@@ -205,6 +205,19 @@ def create_app(matcher=None, handler=None, notifier=None) -> Flask:
             logger.warning("Duplicate signal within %ss window: %s", DUPLICATE_WINDOW_SEC, fingerprint)
         return duplicate
 
+    def _evaluate_hypotheses(signal: dict) -> list[dict]:
+        """Evaluate matching hypotheses without entering execution."""
+        observations = []
+        for item in plan_matcher.evaluate_hypothesis_market(signal):
+            plan = item["plan"]
+            evaluation = item["evaluation"]
+            for event_type in evaluation.get("matches", []):
+                event = {"event_type": event_type, "description": f"Condition matched: {event_type}", "source": "market", "market": signal}
+                result = plan_matcher.process_hypothesis_event(plan.get("id"), event)
+                observations.append({"plan_id": plan.get("id"), "event_type": event_type,
+                                     "hypothesis_status": result.get("hypothesis_status") if result else normalize_status(plan.get("hypothesis_status"))})
+        return observations
+
     def _record_hypothesis_market_event(plan: dict, signal: dict) -> tuple[str, dict | None]:
         """Record an explicit market event and advance a GUI hypothesis."""
         if "hypothesis_status" not in plan:
@@ -341,6 +354,9 @@ def create_app(matcher=None, handler=None, notifier=None) -> Flask:
 
             # Hypothesis observation is deliberately evaluated before legacy
             # execution matching. Alert/observe hypotheses never reach MT5.
+            observations = _evaluate_hypotheses(payload)
+            if observations:
+                return jsonify({"status": "observed", "matched": True, "executed": False, "hypotheses": observations})
             hypothesis = plan_matcher.match_hypothesis(payload)
             if hypothesis is not None and str(hypothesis.get("execution_mode", "alert")).strip().lower() != "auto_execute":
                 event_type, state = _record_hypothesis_market_event(hypothesis, payload)
