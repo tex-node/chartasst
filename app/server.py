@@ -44,6 +44,12 @@ logger = logging.getLogger(__name__)
 # still processed, to honour the "tolerate duplicates" requirement.
 DUPLICATE_WINDOW_SEC = 10
 
+# Hypothesis lifecycle states that are never observed by the background loop.
+TERMINAL_HYPOTHESIS_STATUSES = ("invalidated", "completed", "expired", "paused")
+
+# Upper bound on the in-memory "already evaluated bar" cache.
+MAX_EVALUATED_BARS = 2000
+
 
 def _json_error(message: str, code: int):
     """Build a consistent JSON error response."""
@@ -74,6 +80,106 @@ def start_uptime_sampler(app: Flask, interval: float = 60.0, stop_event=None):
     thread = threading.Thread(target=_loop, name="mt5-uptime-sampler", daemon=True)
     thread.start()
     return thread
+
+
+def group_observation_hypotheses(plans) -> dict[tuple[str, str], list[dict]]:
+    """Group eligible hypotheses by ``(symbol, timeframe)``.
+
+    Only plans carrying a ``hypothesis_status`` in a non-terminal state are
+    included. Grouping is what lets a single market-context fetch be shared by
+    every hypothesis on the same symbol and timeframe.
+    """
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for plan in plans or []:
+        if not isinstance(plan, dict) or "hypothesis_status" not in plan:
+            continue
+        status = normalize_status(plan.get("hypothesis_status", "watching"))
+        if status in TERMINAL_HYPOTHESIS_STATUSES:
+            continue
+        symbol = str(plan.get("symbol", "")).strip().upper()
+        if not symbol:
+            continue
+        timeframe = str(plan.get("timeframe", "H1")).strip().upper() or "H1"
+        groups.setdefault((symbol, timeframe), []).append(plan)
+    return groups
+
+
+def bar_observation_key(symbol: str, timeframe: str, context: dict) -> tuple[str, str, str] | None:
+    """Key identifying a completed bar, or ``None`` for non-bar observations.
+
+    Non-bar events (e.g. ticks) and events without a timestamp are never
+    deduplicated.
+    """
+    event = str(context.get("event", "")).strip().lower()
+    timestamp = context.get("timestamp")
+    if event not in ("bar_close", "bar_closed") or not timestamp:
+        return None
+    return (
+        str(symbol).strip().upper(),
+        str(timeframe).strip().upper(),
+        str(timestamp),
+    )
+
+
+def _mark_bar_evaluated(
+    key, evaluated_bars, evaluated_bars_lock, max_size: int = MAX_EVALUATED_BARS
+) -> bool:
+    """Record ``key``; return ``True`` when it had already been evaluated."""
+    with evaluated_bars_lock:
+        if key in evaluated_bars:
+            return True
+        evaluated_bars.add(key)
+        if len(evaluated_bars) > max_size:
+            evaluated_bars.pop()
+        return False
+
+
+def run_hypothesis_observer_cycle(
+    plans,
+    mt5_handler,
+    evaluate_hypotheses,
+    evaluated_bars=None,
+    evaluated_bars_lock=None,
+    max_evaluated_bars: int = MAX_EVALUATED_BARS,
+) -> dict[tuple[str, str], list[dict]]:
+    """Run exactly one hypothesis-observer cycle.
+
+    For each unique ``(symbol, timeframe)`` group of eligible hypotheses, fetch
+    the market context **once** and evaluate the whole group against that single
+    snapshot. A completed bar is evaluated at most once per
+    ``(symbol, timeframe, timestamp)`` via ``evaluated_bars``.
+
+    Returns a mapping ``(symbol, timeframe) -> observations`` for groups that
+    were actually evaluated this cycle. Groups skipped because of a context
+    error or a duplicate bar are absent.
+    """
+    if evaluated_bars is None:
+        evaluated_bars = set()
+    if evaluated_bars_lock is None:
+        evaluated_bars_lock = threading.Lock()
+
+    results: dict[tuple[str, str], list[dict]] = {}
+    for (symbol, timeframe), group in group_observation_hypotheses(plans).items():
+        context = mt5_handler.get_market_context(symbol, timeframe)
+        if not context or context.get("error"):
+            continue
+        key = bar_observation_key(symbol, timeframe, context)
+        if key is not None and _mark_bar_evaluated(
+            key, evaluated_bars, evaluated_bars_lock, max_evaluated_bars
+        ):
+            continue
+        observations = evaluate_hypotheses(context)
+        results[(symbol, timeframe)] = observations
+        if observations:
+            logger.info(
+                "Hypothesis observer processed %d observation(s) for %s %s @ %s across %d hypothesis(es)",
+                len(observations),
+                symbol,
+                timeframe,
+                context.get("timestamp"),
+                len(group),
+            )
+    return results
 
 
 def create_app(matcher=None, handler=None, notifier=None) -> Flask:
@@ -592,66 +698,17 @@ def create_app(matcher=None, handler=None, notifier=None) -> Flask:
     # runtime cache; persistent event metadata provides the restart-safe guard.
     evaluated_bars: set[tuple[str, str, str]] = set()
     evaluated_bars_lock = threading.Lock()
-    MAX_EVALUATED_BARS = 2000
-
-    def _bar_observation_key(symbol: str, timeframe: str, context: dict) -> tuple[str, str, str] | None:
-        event = str(context.get("event", "")).strip().lower()
-        timestamp = context.get("timestamp")
-        if event not in ("bar_close", "bar_closed") or not timestamp:
-            return None
-        return (
-            str(symbol).strip().upper(),
-            str(timeframe).strip().upper(),
-            str(timestamp),
-        )
-
-    def _already_evaluated_bar(key: tuple[str, str, str]) -> bool:
-        with evaluated_bars_lock:
-            if key in evaluated_bars:
-                return True
-            evaluated_bars.add(key)
-            if len(evaluated_bars) > MAX_EVALUATED_BARS:
-                evaluated_bars.pop()
-            return False
 
     def _hypothesis_observer():
         while not observer_stop.is_set():
             try:
-                # Group active hypotheses by market context. Each unique
-                # (symbol, timeframe) gets exactly one MT5 context fetch per
-                # observer cycle; all hypotheses in that group are then
-                # evaluated against the same snapshot.
-                groups: dict[tuple[str, str], list[dict]] = {}
-                for plan in list(plan_matcher.plans):
-                    status = normalize_status(plan.get("hypothesis_status", "watching"))
-                    if "hypothesis_status" not in plan or status in ("invalidated", "completed", "expired", "paused"):
-                        continue
-                    symbol = str(plan.get("symbol", "")).strip().upper()
-                    timeframe = str(plan.get("timeframe", "H1")).strip().upper() or "H1"
-                    if not symbol:
-                        continue
-                    groups.setdefault((symbol, timeframe), []).append(plan)
-
-                for (symbol, timeframe), plans in groups.items():
-                    # One market-context fetch for this symbol/timeframe.
-                    context = mt5_handler.get_market_context(symbol, timeframe)
-                    if context.get("error"):
-                        continue
-
-                    bar_key = _bar_observation_key(symbol, timeframe, context)
-                    if bar_key is not None and _already_evaluated_bar(bar_key):
-                        continue
-
-                    observations = _evaluate_hypotheses(context)
-                    if observations:
-                        logger.info(
-                            "Hypothesis observer processed %d observation(s) for %s %s @ %s across %d hypothesis(es)",
-                            len(observations),
-                            symbol,
-                            timeframe,
-                            context.get("timestamp"),
-                            len(plans),
-                        )
+                run_hypothesis_observer_cycle(
+                    list(plan_matcher.plans),
+                    mt5_handler,
+                    _evaluate_hypotheses,
+                    evaluated_bars=evaluated_bars,
+                    evaluated_bars_lock=evaluated_bars_lock,
+                )
             except Exception as exc:
                 logger.warning("Hypothesis observer cycle failed: %s", exc)
             observer_stop.wait(15)

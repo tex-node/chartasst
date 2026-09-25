@@ -27,6 +27,9 @@ class FakeMatcher:
         self.plan = plan
         self.raise_on_match = raise_on_match
         self.stale = stale if stale is not None else []
+        # Mirrors PlanMatcher.plans: the background observer iterates it. PLAN
+        # has no "hypothesis_status", so the observer skips it (no context fetch).
+        self.plans = [plan] if plan else []
 
     def match(self, signal):
         if self.raise_on_match:
@@ -35,6 +38,14 @@ class FakeMatcher:
 
     def match_by_object(self, object_name):
         return self.plan
+
+    def match_hypothesis(self, signal):
+        """Legacy plans carry no hypothesis_status -> no hypothesis match."""
+        return None
+
+    def evaluate_hypothesis_market(self, signal):
+        """No hypotheses configured in these server tests."""
+        return []
 
     def get_active_plans(self):
         return [self.plan] if self.plan else []
