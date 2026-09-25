@@ -165,6 +165,7 @@ Latest test commit:
 4. Improve market-session handling using broker/session timezone configuration.
 5. Improve `reclaim_above` semantics so reclaim requires a prior below-level state followed by a qualifying close above.
 6. Continue refining the GUI so voice/graphical hypothesis creation is the primary user workflow and backend condition structures remain invisible.
+7. Observer performance: group hypotheses by `(symbol, timeframe)` so each unique market context is fetched once per observer cycle, then evaluate all hypotheses in that group against the shared snapshot.
 
 ## Key commits
 
@@ -177,3 +178,4 @@ Latest test commit:
 - `8e17f167d8c050a6a296089fb64e003606c8bb97` — GUI improvements
 - `c28ab085acddba89b24d6ae01f2bfd1ec82cb823` — GUI condition-row layout fix
 - `c33de9f6b09a717cf22585afb7cc3bd05db56087` — MT5 market-context integration tests
+- `ef1dc0b8b669dddfc4bfd3d7d4615146b556505c` — observer groups hypotheses by symbol/timeframe and fetches MT5 context once
