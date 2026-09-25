@@ -92,6 +92,29 @@ def create_app(matcher=None, handler=None, notifier=None) -> Flask:
     notifier_obj = notifier if notifier is not None else Notifier()
     register_gui(app, plan_matcher)
 
+    # --- Hypothesis observation loop ----------------------------------
+    observer_stop = threading.Event()
+
+    def _hypothesis_observer():
+        while not observer_stop.is_set():
+            try:
+                for plan in list(plan_matcher.plans):
+                    status = normalize_status(plan.get("hypothesis_status", "watching"))
+                    if "hypothesis_status" not in plan or status in ("invalidated", "completed", "expired", "paused"):
+                        continue
+                    context = mt5_handler.get_market_context(plan.get("symbol", ""), plan.get("timeframe", "H1"))
+                    if context.get("error"):
+                        continue
+                    observations = _evaluate_hypotheses(context)
+                    if observations:
+                        logger.info("Hypothesis observer processed %d observation(s)", len(observations))
+            except Exception as exc:
+                logger.warning("Hypothesis observer cycle failed: %s", exc)
+            observer_stop.wait(15)
+
+    observer_thread = threading.Thread(target=_hypothesis_observer, name="hypothesis-observer", daemon=True)
+    observer_thread.start()
+
     # --- Startup notification -------------------------------------------
     # A one-line "I'm alive" ping so an NSSM restart / VPS reboot is visible.
     # Suppressed entirely when Telegram is not configured.
