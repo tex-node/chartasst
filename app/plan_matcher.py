@@ -373,6 +373,19 @@ class PlanMatcher:
         if required and current != required:
             logger.info("Hypothesis %s ignored %s while state is %s", plan_id, event_type, current)
             return {"plan": plan, "event_type": event_type, "hypothesis_status": current, "ignored": True}
+        # Idempotency: a completed-bar observation may be replayed after a
+        # process restart. Do not notify or mutate lifecycle state twice.
+        market_metadata = event.get("market") if isinstance(event.get("market"), dict) else event
+        market_timestamp = market_metadata.get("timestamp") or market_metadata.get("bar_timestamp")
+        if market_timestamp:
+            for existing in reversed(plan.get("events", [])):
+                if existing.get("source") != "market" or existing.get("type") != event_type:
+                    continue
+                existing_metadata = existing.get("metadata") or {}
+                existing_timestamp = existing_metadata.get("timestamp") or existing_metadata.get("bar_timestamp")
+                if existing_timestamp == market_timestamp:
+                    return {"plan": plan, "event_type": event_type, "hypothesis_status": current, "ignored": True, "duplicate": True}
+
         record_event(plan, event_type, str(event.get("description") or event.get("condition") or ""), "market", event)
         target = transitions.get(event_type)
         if target:
