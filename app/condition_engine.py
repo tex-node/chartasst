@@ -13,6 +13,14 @@ def _num(value: Any) -> float | None:
         return None
 
 
+def resolve_level(condition: dict, market: dict) -> float | None:
+    level = resolve_level(condition, market)
+    if level is not None: return level
+    reference = str(condition.get("reference", "")).strip().lower()
+    refs = market.get("references") or {}
+    value = refs.get(reference)
+    return _num(value)
+
 def evaluate_condition(condition: dict, market: dict) -> bool:
     if not isinstance(condition, dict) or not isinstance(market, dict):
         return False
