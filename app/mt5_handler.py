@@ -261,8 +261,10 @@ class MT5Handler:
             recent = normalize(list(rows))
             recent.sort(key=lambda x: x["time"])
             # Pull the two completed daily bars and two completed weekly bars.
-            drows = self.mt5.copy_rates_from_pos(resolved, getattr(self.mt5, "TIMEFRAME_D1"), 1, 1) or []
-            wrows = self.mt5.copy_rates_from_pos(resolved, getattr(self.mt5, "TIMEFRAME_W1"), 1, 1) or []
+            drows = self.mt5.copy_rates_from_pos(resolved, getattr(self.mt5, "TIMEFRAME_D1"), 1, 1)
+            wrows = self.mt5.copy_rates_from_pos(resolved, getattr(self.mt5, "TIMEFRAME_W1"), 1, 1)
+            drows = [] if drows is None else drows
+            wrows = [] if wrows is None else wrows
             return build_market_context(resolved, timeframe, recent, normalize(list(drows)), normalize(list(wrows)))
         except Exception as exc:
             logger.error("Market context failed for %s %s: %s", symbol, timeframe, exc)
