@@ -38,8 +38,20 @@ def transition(hypothesis, target, reason="", source="user", metadata=None):
     return hypothesis
 
 def record_event(hypothesis, event_type, description="", source="market", metadata=None):
+    """Record an event unless the same market observation was already recorded."""
+    metadata = metadata or {}
+    market_timestamp = metadata.get("timestamp") or metadata.get("bar_timestamp")
+    if source == "market" and market_timestamp:
+        for existing in reversed(hypothesis.get("events", [])):
+            if existing.get("source") != "market" or existing.get("type") != event_type:
+                continue
+            existing_metadata = existing.get("metadata") or {}
+            existing_market_timestamp = existing_metadata.get("timestamp") or existing_metadata.get("bar_timestamp")
+            if existing_market_timestamp == market_timestamp:
+                return existing
+
     timestamp = now_iso()
-    event = {"type": event_type, "description": description, "source": source, "metadata": metadata or {}, "timestamp": timestamp}
+    event = {"type": event_type, "description": description, "source": source, "metadata": metadata, "timestamp": timestamp}
     hypothesis.setdefault("events", []).append(event)
     hypothesis["updated_at"] = timestamp
     return event
