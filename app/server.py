@@ -586,6 +586,31 @@ def create_app(matcher=None, handler=None, notifier=None) -> Flask:
 
     # --- Hypothesis observation loop ----------------------------------
     observer_stop = threading.Event()
+    # Polling can see the same completed candle many times. Keep a bounded
+    # runtime cache; persistent event metadata provides the restart-safe guard.
+    evaluated_bars: set[tuple[str, str, str]] = set()
+    evaluated_bars_lock = threading.Lock()
+    MAX_EVALUATED_BARS = 2000
+
+    def _bar_observation_key(plan: dict, context: dict) -> tuple[str, str, str] | None:
+        event = str(context.get("event", "")).strip().lower()
+        timestamp = context.get("timestamp")
+        if event not in ("bar_close", "bar_closed") or not timestamp:
+            return None
+        return (
+            str(plan.get("symbol", "")).strip().upper(),
+            str(plan.get("timeframe", "")).strip().upper(),
+            str(timestamp),
+        )
+
+    def _already_evaluated_bar(key: tuple[str, str, str]) -> bool:
+        with evaluated_bars_lock:
+            if key in evaluated_bars:
+                return True
+            evaluated_bars.add(key)
+            if len(evaluated_bars) > MAX_EVALUATED_BARS:
+                evaluated_bars.pop()
+            return False
 
     def _hypothesis_observer():
         while not observer_stop.is_set():
@@ -597,9 +622,20 @@ def create_app(matcher=None, handler=None, notifier=None) -> Flask:
                     context = mt5_handler.get_market_context(plan.get("symbol", ""), plan.get("timeframe", "H1"))
                     if context.get("error"):
                         continue
+
+                    bar_key = _bar_observation_key(plan, context)
+                    if bar_key is not None and _already_evaluated_bar(bar_key):
+                        continue
+
                     observations = _evaluate_hypotheses(context)
                     if observations:
-                        logger.info("Hypothesis observer processed %d observation(s)", len(observations))
+                        logger.info(
+                            "Hypothesis observer processed %d observation(s) for %s %s @ %s",
+                            len(observations),
+                            plan.get("symbol"),
+                            plan.get("timeframe"),
+                            context.get("timestamp"),
+                        )
             except Exception as exc:
                 logger.warning("Hypothesis observer cycle failed: %s", exc)
             observer_stop.wait(15)
