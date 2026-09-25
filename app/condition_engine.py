@@ -15,6 +15,8 @@ def _num(value: Any) -> float | None:
 
 def resolve_level(condition: dict, market: dict) -> float | None:
     level = _num(condition.get("level"))
+    if level is None:
+        level = _num(condition.get("resolved_level"))
     if level is not None: return level
     reference = str(condition.get("reference", "")).strip().lower()
     refs = market.get("references") or {}
