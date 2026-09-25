@@ -155,6 +155,39 @@ class Notifier:
             logger.error("Email notification failed ('%s'): %s", subject, exc)
             return False
 
+    def send_hypothesis_event(self, plan: dict, event_type: str, signal: dict | None = None, status: str | None = None) -> bool:
+        """Notify when a watched hypothesis changes because of market evidence."""
+        plan = plan or {}
+        signal = signal or {}
+        event = str(event_type or "event").strip().lower()
+        labels = {
+            "trigger": ("🟡", "TRIGGER REACHED"),
+            "confirmation": ("🟢", "HYPOTHESIS CONFIRMED"),
+            "invalidation": ("🔴", "HYPOTHESIS INVALIDATED"),
+            "target": ("🏁", "TARGET REACHED"),
+        }
+        emoji, title = labels.get(event, ("🔵", f"HYPOTHESIS UPDATE: {event.upper()}"))
+        symbol = plan.get("symbol") or signal.get("symbol", "?")
+        name = plan.get("name") or "Unnamed hypothesis"
+        lines = [
+            f"{emoji} *{_escape_md(title)}* — {_escape_md(symbol)}",
+            f"📋 Plan: {_escape_md(name)}",
+        ]
+        if status:
+            lines.append(f"📍 Status: {_escape_md(status)}")
+        thesis = (plan.get("hypothesis") or {}).get("thesis") or plan.get("thesis")
+        if thesis:
+            lines.append(f"🧭 Thesis: {_escape_md(thesis)}")
+        if signal.get("price") is not None:
+            lines.append(f"💲 Price: {_escape_md(signal.get('price'))}")
+        if signal.get("timeframe"):
+            lines.append(f"⏱ Timeframe: {_escape_md(signal.get('timeframe'))}")
+        lines.append(f"🕒 {utc_now_iso()}")
+        message = "\n".join(lines)
+        sent = self._send_telegram(message)
+        self._send_email(f"[ChartAsst] {title}: {symbol}", self._to_plain(message))
+        return sent
+
     def send_signal_alert(self, signal: dict, plan: dict, result: dict) -> bool:
         """Send a matched-signal alert to Telegram and email, and journal it.
 
