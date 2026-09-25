@@ -605,7 +605,7 @@ def create_app(matcher=None, handler=None, notifier=None) -> Flask:
             str(timestamp),
         )
 
-    def _already_evaluated_bar(key: tuple[str, str, str]) -> bool:
+    def _already_evaluated_bar(key: tuple[str, str, str, str]) -> bool:
         with evaluated_bars_lock:
             if key in evaluated_bars:
                 return True
