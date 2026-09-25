@@ -362,6 +362,17 @@ class PlanMatcher:
             "invalidate": ("invalidated", "Invalidation reached"),
             "target": ("completed", "Target reached"),
         }
+        current = normalize_status(plan.get("hypothesis_status", "watching"))
+        required_state = {
+            "trigger": "watching",
+            "confirmation": "developing",
+            "confirm": "developing",
+            "target": "confirmed",
+        }
+        required = required_state.get(event_type)
+        if required and current != required:
+            logger.info("Hypothesis %s ignored %s while state is %s", plan_id, event_type, current)
+            return {"plan": plan, "event_type": event_type, "hypothesis_status": current, "ignored": True}
         record_event(plan, event_type, str(event.get("description") or event.get("condition") or ""), "market", event)
         target = transitions.get(event_type)
         if target:
