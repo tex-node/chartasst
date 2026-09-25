@@ -214,8 +214,13 @@ def create_app(matcher=None, handler=None, notifier=None) -> Flask:
             for event_type in evaluation.get("matches", []):
                 event = {"event_type": event_type, "description": f"Condition matched: {event_type}", "source": "market", "market": signal}
                 result = plan_matcher.process_hypothesis_event(plan.get("id"), event)
+                new_status = result.get("hypothesis_status") if result else normalize_status(plan.get("hypothesis_status"))
+                try:
+                    notifier_obj.send_hypothesis_event(plan, event_type, signal, new_status)
+                except Exception as exc:
+                    logger.warning("Hypothesis notification failed: %s", exc)
                 observations.append({"plan_id": plan.get("id"), "event_type": event_type,
-                                     "hypothesis_status": result.get("hypothesis_status") if result else normalize_status(plan.get("hypothesis_status"))})
+                                     "hypothesis_status": new_status})
         return observations
 
     def _record_hypothesis_market_event(plan: dict, signal: dict) -> tuple[str, dict | None]:
