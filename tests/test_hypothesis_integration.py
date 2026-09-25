@@ -554,3 +554,56 @@ def test_repeated_identical_observation_notifies_once(tmp_path, monkeypatch):
     # Exactly one lifecycle notification fired, and only once.
     assert notifier.events == [("hyp_001", "trigger", "developing")]
     assert matcher.get_plan("hyp_001")["hypothesis_status"] == "developing"
+
+
+# --------------------------------------------------------------------------
+# PHASE 3 - real market-event dedup (independent of the lifecycle state gate)
+# --------------------------------------------------------------------------
+def test_duplicate_non_transitioning_market_event_is_deduped(tmp_path):
+    # "development" advances no lifecycle state, so the state gate cannot be the
+    # reason a replay is ignored -> this proves the metadata-timestamp dedup.
+    matcher = make_matcher(tmp_path, [hypothesis({})])
+    first = matcher.process_hypothesis_event(
+        "hyp_001", {"event_type": "development", "market": {"timestamp": "T1", "close": 105}}
+    )
+    assert first.get("ignored") is not True
+
+    second = matcher.process_hypothesis_event(
+        "hyp_001", {"event_type": "development", "market": {"timestamp": "T1", "close": 105}}
+    )
+    assert second.get("duplicate") is True
+    assert second.get("ignored") is True
+
+    dev_events = [
+        e for e in matcher.get_plan("hyp_001")["events"]
+        if e.get("type") == "development" and e.get("source") == "market"
+    ]
+    assert len(dev_events) == 1
+
+
+def test_different_market_timestamp_is_recorded(tmp_path):
+    matcher = make_matcher(tmp_path, [hypothesis({})])
+    matcher.process_hypothesis_event("hyp_001", {"event_type": "development", "market": {"timestamp": "T1"}})
+    dup = matcher.process_hypothesis_event("hyp_001", {"event_type": "development", "market": {"timestamp": "T1"}})
+    assert dup.get("duplicate") is True
+    matcher.process_hypothesis_event("hyp_001", {"event_type": "development", "market": {"timestamp": "T2"}})
+
+    stamps = [
+        e["metadata"]["market"]["timestamp"]
+        for e in matcher.get_plan("hyp_001")["events"]
+        if e.get("type") == "development" and e.get("source") == "market"
+    ]
+    assert stamps == ["T1", "T2"]
+
+
+def test_extract_market_timestamp_supports_shapes():
+    from app.hypothesis_state import extract_market_timestamp
+    # Current persisted wrapper shape.
+    assert extract_market_timestamp({"event_type": "development", "market": {"timestamp": "T1"}}) == "T1"
+    # Older flat shape.
+    assert extract_market_timestamp({"timestamp": "T2"}) == "T2"
+    # bar_timestamp alias.
+    assert extract_market_timestamp({"market": {"bar_timestamp": "T3"}}) == "T3"
+    # No market timestamp.
+    assert extract_market_timestamp({"event_type": "development"}) is None
+    assert extract_market_timestamp(None) is None

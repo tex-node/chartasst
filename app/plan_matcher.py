@@ -364,7 +364,7 @@ class PlanMatcher:
         plan = self.get_plan(plan_id)
         if not plan:
             return None
-        from app.hypothesis_state import record_event, transition, normalize_status
+        from app.hypothesis_state import record_event, transition, normalize_status, extract_market_timestamp
         event = event if isinstance(event, dict) else {}
         event_type = str(event.get("event_type") or event.get("type") or "development").strip().lower()
         transitions = {
@@ -388,14 +388,14 @@ class PlanMatcher:
             return {"plan": plan, "event_type": event_type, "hypothesis_status": current, "ignored": True}
         # Idempotency: a completed-bar observation may be replayed after a
         # process restart. Do not notify or mutate lifecycle state twice.
-        market_metadata = event.get("market") if isinstance(event.get("market"), dict) else event
-        market_timestamp = market_metadata.get("timestamp") or market_metadata.get("bar_timestamp")
+        # ``extract_market_timestamp`` reads the actual persisted shape
+        # (``metadata["market"]["timestamp"]``) as well as older flat records.
+        market_timestamp = extract_market_timestamp(event)
         if market_timestamp:
             for existing in reversed(plan.get("events", [])):
                 if existing.get("source") != "market" or existing.get("type") != event_type:
                     continue
-                existing_metadata = existing.get("metadata") or {}
-                existing_timestamp = existing_metadata.get("timestamp") or existing_metadata.get("bar_timestamp")
+                existing_timestamp = extract_market_timestamp(existing.get("metadata"))
                 if existing_timestamp == market_timestamp:
                     return {"plan": plan, "event_type": event_type, "hypothesis_status": current, "ignored": True, "duplicate": True}
 

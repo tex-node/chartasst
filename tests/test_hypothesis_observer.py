@@ -19,6 +19,7 @@ from app.server import (
     bar_observation_key,
     group_observation_hypotheses,
     run_hypothesis_observer_cycle,
+    run_observer_cycle_from_matcher,
 )
 
 
@@ -398,4 +399,33 @@ def test_evaluation_failure_is_retried_then_bar_marked():
     third = run_hypothesis_observer_cycle(plans, handler, evaluate, evaluated_bars, lock)
     assert third == {}                    # same completed bar now skipped
     assert state["calls"] == 2            # third cycle did not re-evaluate
+
+
+# --------------------------------------------------------------------------
+# PHASE 4B - the observer consumes a snapshot, never the mutable plans list
+# --------------------------------------------------------------------------
+class _SnapshotOnlyMatcher:
+    """A matcher whose mutable ``plans`` attribute raises if touched."""
+
+    def __init__(self, plans):
+        self._plans = plans
+
+    @property
+    def plans(self):
+        raise AssertionError("observer must read snapshot_plans(), not the live list")
+
+    def snapshot_plans(self):
+        return list(self._plans)
+
+
+def test_observer_reads_snapshot_not_mutable_plans():
+    plans = [hypothesis("x", "XAUUSD", "H1")]
+    matcher = _SnapshotOnlyMatcher(plans)
+    handler = _BySymbolHandler({("XAUUSD", "H1"): bar_context("XAUUSD", "H1", "T1")})
+
+    # run_observer_cycle_from_matcher is the seam the background thread uses.
+    results = run_observer_cycle_from_matcher(matcher, handler, EvaluateSpy(), set())
+
+    assert ("XAUUSD", "H1") in results
+    # No AssertionError raised => the live mutable list was never iterated.
 

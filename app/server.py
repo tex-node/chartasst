@@ -215,6 +215,30 @@ def run_hypothesis_observer_cycle(
     return results
 
 
+def run_observer_cycle_from_matcher(
+    plan_matcher,
+    mt5_handler,
+    evaluate_hypotheses,
+    evaluated_bars,
+    evaluated_bars_lock=None,
+) -> dict[tuple[str, str], list[dict]]:
+    """Snapshot the matcher's plans under its lock, then run one observer cycle.
+
+    This is the seam used by the background observer thread. The plan snapshot is
+    taken (and the matcher lock released) *before* any MT5 / evaluation work, so
+    the observer never iterates the live, mutable ``plan_matcher.plans`` list and
+    never holds the lock across network/evaluation calls.
+    """
+    plans = plan_matcher.snapshot_plans()
+    return run_hypothesis_observer_cycle(
+        plans,
+        mt5_handler,
+        evaluate_hypotheses,
+        evaluated_bars=evaluated_bars,
+        evaluated_bars_lock=evaluated_bars_lock,
+    )
+
+
 def create_app(matcher=None, handler=None, notifier=None) -> Flask:
     """Application factory.
 
@@ -734,8 +758,8 @@ def create_app(matcher=None, handler=None, notifier=None) -> Flask:
     def _hypothesis_observer():
         while not observer_stop.is_set():
             try:
-                run_hypothesis_observer_cycle(
-                    plan_matcher.snapshot_plans(),
+                run_observer_cycle_from_matcher(
+                    plan_matcher,
                     mt5_handler,
                     _evaluate_hypotheses,
                     evaluated_bars=evaluated_bars,
